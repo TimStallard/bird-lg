@@ -53,13 +53,16 @@ memcache_expiration = int(app.config.get("MEMCACHE_EXPIRATION", "1296000")) # 1
 mc = memcache.Client([memcache_server])
 
 def get_asn_from_as(n):
-    asn_zone = app.config.get("ASN_ZONE", "asn.cymru.com")
-    try:
-        data = resolve("AS%s.%s" % (n, asn_zone) ,"TXT").replace("'","").replace('"','')
-    except:
-        return " "*5
-    return [ field.strip() for field in data.split("|") ]
-
+    asn_zone = app.config.get("ASN_ZONE", False)
+    # don't generate spurious (and potentially slow) lookups if ASN_ZONE not defined in config
+    if asn_zone:
+        try:
+            data = resolve("AS%s.%s" % (n, asn_zone) ,"TXT").replace("'","").replace('"','')
+        except:
+            return False
+        return [ field.strip() for field in data.split("|") ]
+    else:
+        return False
 
 def add_links(text):
     """Browser a string and replace ipv4, ipv6, as number, with a
@@ -149,8 +152,10 @@ def bird_proxy(host, proto, service, query):
         return False, 'Proto "%s" invalid' % proto
     else:
         url = "http://%s/%s?q=%s" % (proxyHost, path, quote(query))
+        proxy_timeout = app.config["PROXY_TIMEOUT"].get(service, 60)
+
         try:
-            f = urlopen(url)
+            f = urlopen(url, None, proxy_timeout)
             resultat = f.read()
             status = True                # retreive remote status
         except IOError:
@@ -260,7 +265,16 @@ def summary(hosts, proto="ipv4"):
                     props["table"] = split[2]
                     props["state"] = split[3]
                     props["since"] = split[4]
-                    props["info"] = ' '.join(split[5:]) if len(split) > 5 else ""
+                    if len(split) > 5:
+			# if bird is configured for 'timeformat protocol iso long'
+                        # then the 5th column contains the time, rather than info
+			match =	re.match(r'\d\d:\d\d:\d\d', split[5])
+                        if match:
+                            props["info"] = ' '.join(split[6:]) if len(split) > 6 else ""
+                        else:
+                            props["info"] = ' '.join(split[5:])
+                    else:
+                        props["info"] = ""
                     data.append(props)
                 else:
                     app.logger.warning("couldn't parse: %s", line)
@@ -394,9 +408,13 @@ def get_as_name(_as):
     name = mc.get(str('lg_%s' % _as))
     if not name:
         app.logger.info("asn for as %s not found in memcache", _as)
-        name = get_asn_from_as(_as)[-1].replace(" ","\r",1)
-        if name:
+        asn_result = get_asn_from_as(_as)
+        if asn_result:
+            name = asn_result[-1].replace(" ","\r",1)
             mc.set(str("lg_%s" % _as), str(name), memcache_expiration)
+        else:
+            return "AS%s" % (_as)
+
     return "AS%s | %s" % (_as, name)
 
 
@@ -551,18 +569,20 @@ def build_as_tree_from_raw_bird_ouput(host, proto, text):
     for line in text:
         line = line.strip()
 
-        expr = re.search(r'(.*)via\s+([0-9a-fA-F:\.]+)\s+on.*\[(\w+)\s+', line)
+        expr = re.search(r'(.*)unicast\s+\[(\w+)\s+', line)
         if expr:
+            if expr.group(1).strip():
+                net_dest = expr.group(1).strip()
+            peer_protocol_name = expr.group(2).strip()
+
+        expr2 = re.search(r'via\s+([0-9a-fA-F:\.]+)', line)
+        if expr2:
             if path:
                 path.append(net_dest)
                 paths.append(path)
                 path = None
 
-            if expr.group(1).strip():
-                net_dest = expr.group(1).strip()
-
-            peer_ip = expr.group(2).strip()
-            peer_protocol_name = expr.group(3).strip()
+            peer_ip = expr2.group(1).strip()
             # Check if via line is a internal route
             for rt_host, rt_ips in app.config["ROUTER_IP"].iteritems():
                 # Special case for internal routing
@@ -574,15 +594,15 @@ def build_as_tree_from_raw_bird_ouput(host, proto, text):
                 path = [ peer_protocol_name ]
 #                path = ["%s\r%s" % (peer_protocol_name, get_as_name(get_as_number_from_protocol_name(host, proto, peer_protocol_name)))]
         
-        expr2 = re.search(r'(.*)unreachable\s+\[(\w+)\s+', line)
-        if expr2:
+        expr3 = re.search(r'(.*)unreachable\s+\[(\w+)\s+', line)
+        if expr3:
             if path:
                 path.append(net_dest)
                 paths.append(path)
                 path = None
 
-            if expr2.group(1).strip():
-                net_dest = expr2.group(1).strip()
+            if expr3.group(1).strip():
+                net_dest = expr3.group(1).strip()
 
         if line.startswith("BGP.as_path:"):
             path.extend(line.replace("BGP.as_path:", "").strip().split(" "))
