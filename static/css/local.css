@@ -10,3 +10,8 @@ body {
 .table td, .table th {
     padding: .4rem;
 }
+
+.nav-link {
+    padding: 0.1rem 0.3rem;
+}
+
