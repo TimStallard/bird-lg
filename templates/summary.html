@@ -11,7 +11,7 @@
 	<tr class="{{ loop.cycle('odd', 'even') }}">
         <td><a href="/detail/{{host}}/{{session.proto}}?q={{row.name}}">{{row.name}}</a></td>
         <td>{{row.proto}}</td>
-        <td><span class="badge badge-{% if row.state == "up" %}success{% elif row.state == "down" %}info{% else %}danger{% endif %}">{{row.state}}</span></td>
+        <td><span class="badge badge-{% if row.state == "up" %}success{% elif row.state == "down" %}default{% elif row.state == "start" and row.info == "Passive" %}info{% else %}danger{% endif %}">{{row.state}}</span></td>
         <td>{{row.since}}</td>
         <td>{{row.info}}</td>
     </tr>

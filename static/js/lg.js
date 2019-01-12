@@ -51,8 +51,8 @@ $(function(){
 			event.preventDefault();
 			link = $(this).attr('href');
 			$.getJSON(link, function(data) {
-				$(".modal h3").html(data.title);
-			        $(".modal .modal-body > p").html(data.output);
+				$(".modal .modal-dialog .modal-content .modal-header .modal-title").html(data.title);
+			        $(".modal .modal-dialog .modal-content .modal-body > p").html(data.output);
 				$(".modal").modal('show');
 			});
 		});
